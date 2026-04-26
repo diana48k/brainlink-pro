@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>BrainLink Pro — Neural Dashboard v2</title>
+<title>BrainLink Pro — Neural Dashboard v2.1</title>
 <link rel="manifest" href="data:application/json;base64,ewogICJuYW1lIjogIkJyYWluTGluayBQcm8iLAogICJzaG9ydF9uYW1lIjogIkJyYWluTGluayIsCiAgInN0YXJ0X3VybCI6ICIuIiwKICAiZGlzcGxheSI6ICJzdGFuZGFsb25lIiwKICAiYmFja2dyb3VuZF9jb2xvciI6ICIjMDIwODEwIiwKICAidGhlbWVfY29sb3IiOiAiIzAwZDRmZiIKfQ==">
 <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;600;700;900&family=Sarabun:wght@300;400;500;600&family=Share+Tech+Mono&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
@@ -255,6 +255,7 @@ select { background:var(--bg-card2); border:1px solid var(--border-glow); color:
       <div class="signal-bar" style="height:20px"></div>
     </div></div>
     <div class="status-item">🔋 Battery: <span id="batteryLvl">--</span></div>
+    <div class="status-item">👁️ Blinks: <span id="blinkRate">--</span>/min</div>
     <div class="status-item">⏱ <span id="sessionTime">ยังไม่เริ่ม</span></div>
     <div class="status-item" style="margin-left:auto"><span style="color:var(--accent-yellow);font-size:10px" id="modeLabel">⬡ DEMO SIMULATION</span></div>
   </div>
@@ -311,6 +312,15 @@ select { background:var(--bg-card2); border:1px solid var(--border-glow); color:
       <div class="metric-sub" id="stressLabel" style="margin-top:8px">--</div>
     </div>
   </div>
+
+  <!-- v2.1 NEW FEATURES ROW -->
+  <div class="grid-4">
+    <div class="card"><div class="card-label">👁️ EYE HEALTH • สุขภาพตา</div><div class="metric-value" id="blinkCount" style="color:var(--accent-cyan);font-size:32px">--</div><div class="metric-sub">Blinks/minute</div><div id="eyeFatigue" style="margin-top:12px;font-size:12px;color:var(--text-secondary)">Fatigue: <span id="fatiguePct">0</span>% <span id="fatigueStatus">🟢 Good</span></div></div>
+    <div class="card"><div class="card-label">🎭 EMOTION • อารมณ์</div><div style="text-align:center;margin:8px 0"><div id="emotionEmoji" style="font-size:48px">😐</div><div id="emotionName" style="font-size:14px;font-weight:600;color:var(--accent-cyan);margin-top:4px">Neutral</div></div><div id="emotionDesc" style="font-size:11px;color:var(--text-secondary);text-align:center">กำลังวิเคราะห์...</div></div>
+    <div class="card"><div class="card-label">✨ FLOW STATE<span id="flowIndicator" style="font-size:14px;margin-left:8px">⚫</span></div><div id="flowStatus" style="font-size:12px;color:var(--text-secondary);margin-bottom:8px">Not in flow</div><div style="display:grid;grid-template-columns:1fr 1fr;gap:8px"><div><div style="font-size:9px;color:var(--text-dim)">NOW</div><div id="flowDuration" style="font-family:'Orbitron',monospace;font-size:16px;color:var(--accent-cyan)">00:00</div></div><div><div style="font-size:9px;color:var(--text-dim)">BEST</div><div id="flowLongest" style="font-family:'Orbitron',monospace;font-size:16px;color:var(--accent-yellow)">00:00</div></div></div><div id="flowConditions" style="margin-top:8px;font-size:10px;line-height:1.6"></div></div>
+    <div class="card"><div class="card-label">🌡️ LOAD • ภาระสมอง</div><div style="text-align:center;margin:8px 0"><div id="loadValue" style="font-family:'Orbitron',monospace;font-size:32px;color:var(--accent-orange)">0<span style="font-size:16px">%</span></div><div id="loadLabel" style="font-size:11px;color:var(--text-secondary);margin-top:2px">Low</div></div><div class="wave-bar-bg" style="height:8px"><div id="loadBar" style="height:100%;border-radius:4px;background:linear-gradient(90deg,var(--accent-green),var(--accent-yellow),var(--accent-orange),var(--accent-pink));width:0%;transition:width 0.5s"></div></div><div id="loadAdvice" style="margin-top:8px;font-size:10px;color:var(--text-secondary)"></div></div>
+  </div>
+
 
   <div class="grid-2" style="grid-template-columns:1.2fr 0.8fr">
     <div class="card">
@@ -731,6 +741,12 @@ let isRunning = false, isDemoMode = true, isRealBT = false;
 let updateInterval = null, sessionStart = null, timerInterval = null;
 let sessionSeconds = 0, updateRate = 1000;
 let sessions = [], currentData = {};
+
+let blinkTimestamps = [], lastBreakReminder = Date.now();
+let emotionLog = [], currentEmotion = null, emotionStartTime = null;
+let flowStartTime = null, flowLongestToday = 0, flowUpdateInterval = null;
+let highLoadStartTime = null, chartUpdateCounter = 0;
+
 let attChartInst, waveDonutInst, histChartInst, hrSparkInst;
 let attHistory = Array(60).fill(50), medHistory = Array(60).fill(50), hrHistory = Array(30).fill(70);
 let eegPhase = 0;
@@ -790,9 +806,19 @@ function showToast(msg, type='', delay=3000) {
 // ===== LOCALSTORAGE =====
 function saveToStorage() {
   try {
+    if (sessions.length > 500) {
+      sessions = sessions.slice(-500);
+      showToast('💾 เก็บเฉพาะ 500 session ล่าสุด', 'info');
+    }
     localStorage.setItem('brainlink_sessions', JSON.stringify(sessions));
     localStorage.setItem('brainlink_highscore', gameScore);
-  } catch(e) { dlog('Storage save failed: '+e.message,'err'); }
+  } catch(e) {
+    if (e.name === 'QuotaExceededError') {
+      sessions = sessions.slice(Math.floor(sessions.length / 2));
+      saveToStorage();
+      showToast('⚠️ Storage เต็ม — ลบข้อมูลเก่า', 'warn');
+    } else { dlog('Storage save failed: ' + e.message, 'err'); }
+  }
 }
 
 function loadFromStorage() {
@@ -911,6 +937,8 @@ function parseTGAMPayload(payload) {
 }
 
 function onTGAMData(data) {
+  if (data.blink !== undefined) handleBlink(data.blink);
+
   if (data.signalQuality !== undefined) {
     const quality = Math.max(0, 5 - Math.floor(data.signalQuality / 40));
     setSignalQuality(quality);
@@ -973,6 +1001,47 @@ function updateDashboard(d) {
 
   updateCharts(d, total);
   updateAIInsight(d);
+  
+  // 🎭 v2.1 EMOTION DETECTION
+  const emotion = detectEmotion({lowAlpha: d.alpha * 0.5, highAlpha: d.alpha * 0.5, lowBeta: d.beta * 0.6, highBeta: d.beta * 0.4, lowGamma: d.gamma * 0.5, midGamma: d.gamma * 0.5, theta: d.theta, delta: d.delta});
+  const emojiEl = document.getElementById('emotionEmoji');
+  const nameEl = document.getElementById('emotionName');
+  const descEl = document.getElementById('emotionDesc');
+  if (emojiEl) emojiEl.textContent = emotion.emoji;
+  if (nameEl) nameEl.textContent = emotion.name;
+  if (descEl) descEl.textContent = emotion.desc;
+  if (!currentEmotion || currentEmotion.name !== emotion.name) {
+    if (currentEmotion && emotionStartTime) {
+      const duration = Math.floor((Date.now() - emotionStartTime) / 60000);
+      if (duration > 0) emotionLog.push({time: new Date(emotionStartTime).toLocaleTimeString('th-TH', {hour: '2-digit', minute: '2-digit'}), emotion: currentEmotion.emoji + ' ' + currentEmotion.name, duration: duration});
+    }
+    currentEmotion = emotion;
+    emotionStartTime = Date.now();
+  }
+  
+  // ✨ v2.1 FLOW STATE
+  detectFlow(d, {lowAlpha: d.alpha * 0.5, highAlpha: d.alpha * 0.5, theta: d.theta, lowBeta: d.beta * 0.6, highBeta: d.beta * 0.4, lowGamma: d.gamma * 0.5, midGamma: d.gamma * 0.5});
+  
+  // 🌡️ v2.1 COGNITIVE LOAD
+  const cogLoad = calculateCognitiveLoad({lowBeta: d.beta * 0.6, highBeta: d.beta * 0.4, theta: d.theta, lowGamma: d.gamma * 0.5, midGamma: d.gamma * 0.5});
+  const loadValEl = document.getElementById('loadValue');
+  const loadBarEl = document.getElementById('loadBar');
+  const loadLabelEl = document.getElementById('loadLabel');
+  const loadAdviceEl = document.getElementById('loadAdvice');
+  if (loadValEl) loadValEl.innerHTML = cogLoad + '<span style="font-size:16px">%</span>';
+  if (loadBarEl) loadBarEl.style.width = cogLoad + '%';
+  let loadLabel, loadAdvice;
+  if (cogLoad < 30) { loadLabel = '🟢 Low — พร้อมทำงาน'; loadAdvice = 'สภาวะดี เหมาะงานคิด'; }
+  else if (cogLoad < 60) { loadLabel = '🟡 Medium — กำลังทำงาน'; loadAdvice = 'สมองทำงานปกติ'; }
+  else if (cogLoad < 80) { loadLabel = '🟠 High — ใกล้ขีดจำกัด'; loadAdvice = 'พักใน 30-60 นาที'; }
+  else { loadLabel = '🔴 Very High — โอเวอร์โหลด'; loadAdvice = '⚠️ พักสมองทันที 5-10 นาที'; }
+  if (loadLabelEl) loadLabelEl.textContent = loadLabel;
+  if (loadAdviceEl) loadAdviceEl.textContent = loadAdvice;
+  if (cogLoad >= 80) {
+    if (!highLoadStartTime) highLoadStartTime = Date.now();
+    const duration = (Date.now() - highLoadStartTime) / 60000;
+    if (duration >= 10) { showToast('⚠️ สมองทำงานหนักเกิน 10 นาที — พักด่วน!', 'error', 8000); highLoadStartTime = Date.now(); }
+  } else { highLoadStartTime = null; }
 
   // Update game
   if (gameRunning) updateGame(d.attention);
@@ -994,6 +1063,9 @@ function updateStressBars(stress) {
 }
 
 function updateCharts(d, total) {
+  chartUpdateCounter++;
+  if (chartUpdateCounter % 3 !== 0) return;
+
   if (attChartInst) {
     attChartInst.data.datasets[0].data = [...attHistory];
     attChartInst.data.datasets[1].data = [...medHistory];
@@ -1642,6 +1714,112 @@ function stressLabel(v) {
 }
 
 // ===== CHARTS =====
+// ===== v2.1 NEW FEATURES =====
+
+function handleBlink(strength) {
+  if (strength > 50) {
+    blinkTimestamps.push(Date.now());
+    const oneMinAgo = Date.now() - 60000;
+    blinkTimestamps = blinkTimestamps.filter(t => t > oneMinAgo);
+    const blinksPerMin = blinkTimestamps.length;
+    document.getElementById('blinkRate').textContent = blinksPerMin;
+    const blinkCountEl = document.getElementById('blinkCount');
+    if (blinkCountEl) {
+      blinkCountEl.textContent = blinksPerMin;
+      let fatigue = 0;
+      if (blinksPerMin < 15) fatigue = Math.min(100, (15 - blinksPerMin) * 10);
+      else if (blinksPerMin > 25) fatigue = Math.min(100, (blinksPerMin - 25) * 5);
+      document.getElementById('fatiguePct').textContent = fatigue;
+      document.getElementById('fatigueStatus').innerHTML = fatigue > 60 ? '🔴 High' : fatigue > 30 ? '🟡 Medium' : '🟢 Good';
+    }
+    if (Date.now() - lastBreakReminder > 20 * 60 * 1000) {
+      showToast('👁️ 20-20-20 Rule — มองวัตถุไกล 20 ฟุต นาน 20 วิ', 'info', 8000);
+      lastBreakReminder = Date.now();
+    }
+  }
+}
+
+function detectEmotion(waves) {
+  const total = Object.values(waves).reduce((a,b) => a+b, 0);
+  if (total === 0) return {emoji: '😐', name: 'Neutral', desc: 'กำลังวิเคราะห์...'};
+  const pct = (w) => waves[w] / total * 100;
+  const beta = pct('lowBeta') + pct('highBeta');
+  const alpha = pct('lowAlpha') + pct('highAlpha');
+  const gamma = pct('lowGamma') + pct('midGamma');
+  const theta = pct('theta');
+  const delta = pct('delta');
+  if (beta > 50 && gamma > 15) return {emoji: '😊', name: 'Excited', desc: 'พลังงานสูง กระตือรือร้น'};
+  if (alpha > 40 && beta < 25) return {emoji: '😌', name: 'Calm', desc: 'ผ่อนคลาย สงบใจ'};
+  if (beta > 55 && alpha < 20) return {emoji: '😰', name: 'Anxious', desc: 'กังวล เครียด'};
+  if (theta > 35 && beta < 20) return {emoji: '😑', name: 'Bored', desc: 'เบื่อ ไม่ตื่นตัว'};
+  if (beta >= 30 && beta <= 50 && alpha > 25) return {emoji: '🤔', name: 'Focused', desc: 'ตั้งใจ มีสมาธิ'};
+  if (theta + delta > 50) return {emoji: '😴', name: 'Sleepy', desc: 'ง่วง อยากนอน'};
+  return {emoji: '😐', name: 'Neutral', desc: 'สภาวะปกติ'};
+}
+
+function detectFlow(data, waves) {
+  const total = Object.values(waves).reduce((a,b) => a+b, 0);
+  if (total === 0) return false;
+  const alpha = ((waves.lowAlpha || 0) + (waves.highAlpha || 0)) / total * 100;
+  const theta = (waves.theta || 0) / total * 100;
+  const ratio = theta > 0 ? alpha / theta : 0;
+  const lowBeta = (waves.lowBeta || 0) / total * 100;
+  const highBeta = (waves.highBeta || 0) / total * 100;
+  const conditions = {
+    ratio: ratio >= 1.5 && ratio <= 2.5,
+    attention: data.attention > 70,
+    lowBeta: lowBeta >= 30 && lowBeta <= 50,
+    highBeta: highBeta < 25
+  };
+  const condEl = document.getElementById('flowConditions');
+  if (condEl) condEl.innerHTML = `${conditions.ratio ? '✅' : '❌'} A/T: ${ratio.toFixed(2)}<br>${conditions.attention ? '✅' : '❌'} Att: ${data.attention}<br>${conditions.lowBeta ? '✅' : '❌'} LowB: ${lowBeta.toFixed(0)}%<br>${conditions.highBeta ? '✅' : '❌'} HighB: ${highBeta.toFixed(0)}%`;
+  const isFlow = Object.values(conditions).every(v => v);
+  if (isFlow && !flowStartTime) {
+    flowStartTime = Date.now();
+    const indEl = document.getElementById('flowIndicator');
+    const statEl = document.getElementById('flowStatus');
+    if (indEl) indEl.textContent = '🟢';
+    if (statEl) statEl.innerHTML = '<strong style="color:var(--accent-green)">IN FLOW!</strong>';
+    showToast('✨ เข้าสู่ Flow State แล้ว!', 'success');
+    flowUpdateInterval = setInterval(() => {
+      const dur = Math.floor((Date.now() - flowStartTime) / 1000);
+      const m = String(Math.floor(dur / 60)).padStart(2, '0');
+      const s = String(dur % 60).padStart(2, '0');
+      const durEl = document.getElementById('flowDuration');
+      if (durEl) durEl.textContent = `${m}:${s}`;
+    }, 1000);
+  } else if (!isFlow && flowStartTime) {
+    const duration = Math.floor((Date.now() - flowStartTime) / 60000);
+    if (duration > flowLongestToday) {
+      flowLongestToday = duration;
+      const m = String(Math.floor(flowLongestToday / 60)).padStart(2, '0');
+      const s = String(flowLongestToday % 60).padStart(2, '0');
+      const longEl = document.getElementById('flowLongest');
+      if (longEl) longEl.textContent = `${m}:${s}`;
+    }
+    flowStartTime = null;
+    const indEl = document.getElementById('flowIndicator');
+    const statEl = document.getElementById('flowStatus');
+    const durEl = document.getElementById('flowDuration');
+    if (indEl) indEl.textContent = '⚫';
+    if (statEl) statEl.textContent = 'Not in flow';
+    if (durEl) durEl.textContent = '00:00';
+    clearInterval(flowUpdateInterval);
+    showToast(`Flow สิ้นสุด — อยู่ได้ ${duration} นาที`, 'info');
+  }
+  return isFlow;
+}
+
+function calculateCognitiveLoad(waves) {
+  const total = Object.values(waves).reduce((a,b) => a+b, 0);
+  if (total === 0) return 0;
+  const beta = ((waves.lowBeta || 0) + (waves.highBeta || 0)) / total * 100;
+  const theta = (waves.theta || 0) / total * 100;
+  const gamma = ((waves.lowGamma || 0) + (waves.midGamma || 0)) / total * 100;
+  const load = (beta * 0.4) + (gamma * 0.4) - (theta * 0.2);
+  return Math.max(0, Math.min(100, Math.round(load)));
+}
+
 function initCharts() {
   const cDef = { responsive: true, animation: false,
     plugins: { legend: { display: false }, tooltip: { enabled: false } },
